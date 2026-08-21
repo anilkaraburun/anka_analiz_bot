@@ -2,7 +2,7 @@ import os
 import requests
 import traceback
 from datetime import datetime, timedelta
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -25,9 +25,22 @@ def parse_form(form_str):
     pts = sum(3 if c == 'W' else 1 if c == 'D' else 0 for c in form_str)
     return pts / len(form_str) if len(form_str) > 0 else 1.0
 
+# ==========================================
+# ⚙️ OTOMATİK MENÜ KURULUMU
+# ==========================================
+async def setup_menu(application: Application):
+    commands = [
+        BotCommand("start", "🤖 Botu başlatır ve bilgi verir"),
+        BotCommand("maclar", "⚽ Futbol Taraf ve Gol Analizleri"),
+        BotCommand("basket", "🏀 Basketbol Sayı ve Taraf Analizleri")
+    ]
+    await application.bot.set_my_commands(commands)
+    print("Menü başarıyla Telegram'a yüklendi!")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Avrupa Futbol ve Basketbol Analiz Botu Devrede! 🤖\n\n"
+        "Sol alt köşedeki **Menü** butonuna tıklayarak veya aşağıdaki komutları yazarak analizlere ulaşabilirsin:\n"
         "⚽ /maclar - Futbol maçlarını analiz eder\n"
         "🏀 /basket - Basketbol maçlarını analiz eder"
     )
@@ -68,7 +81,6 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 standings_data = std_res.json().get("response", [])
                 team_dict = {}
                 
-                # Tüm konferansları (Doğu/Batı) veya Grupları dolaş
                 for item in standings_data:
                     if isinstance(item, list):
                         for row in item:
@@ -104,11 +116,8 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
             h_played = h_games.get("played", 0)
             a_played = a_games.get("played", 0)
             
-            # Veri yoksa pas geç, ekranı kirletme
-            if h_played < 1 or a_played < 1:
-                continue
+            if h_played < 1 or a_played < 1: continue
                 
-            # API'nin "win" veya "won" kullanımını garantiye al
             h_win_data = h_games.get("win") or h_games.get("won") or {}
             a_win_data = a_games.get("win") or a_games.get("won") or {}
             
@@ -174,7 +183,6 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         error_details = traceback.format_exc()
         await update.message.reply_text(f"⚠️ Basketbol analizinde hata oluştu:\n{str(e)}")
-        print(error_details)
 
 # ==========================================
 # ⚽ FUTBOL ANALİZ ALGORİTMASI
@@ -325,12 +333,14 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ Futbol analizinde hata oluştu:\n{str(e)}")
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # post_init eklendi: Bot başlarken setup_menu fonksiyonunu çalıştırıp menüyü kuracak.
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(setup_menu).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("basket", basket))
     
-    print("Futbol & Basketbol Botu (Konferans Düzeltmeli) Başladı...")
+    print("Futbol & Basketbol Botu (Otomatik Menülü) Başladı...")
     app.run_polling()
 
 if __name__ == "__main__":
