@@ -1,6 +1,5 @@
 import os
 import requests
-from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -12,7 +11,6 @@ HEADERS = {
     "x-apisports-key": FOOTBALL_TOKEN
 }
 
-# Hız sınırına takılmamak için şimdilik 3 lig (Toplam 6 istek yapar, sınır 10)
 LEAGUES = {
     203: "🇹🇷 Süper Lig",
     39: "🇬🇧 Premier League",
@@ -27,28 +25,19 @@ def parse_form(form_str):
     return pts / len(form_str) if len(form_str) > 0 else 1.0
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Süper Lig Analiz Botu (Hız Korumalı) devrede! 🤖\n/maclar - Maçları getirir")
+    await update.message.reply_text("Süper Lig Analiz Botu (Garanti Mod) devrede! 🤖\n/maclar - Maçları getirir")
 
 async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Maçlar çekiliyor, lütfen bekle...")
+    await update.message.reply_text("Gelecek maçlar doğrudan çekiliyor, lütfen bekle...")
     
-    today = datetime.utcnow()
-    season = today.year if today.month >= 7 else today.year - 1
-    
-    start_date = today.strftime("%Y-%m-%d")
-    end_date = (today + timedelta(days=5)).strftime("%Y-%m-%d")
-    
+    season = 2026
     mesajlar = []
     
     for comp_id, comp_name in LEAGUES.items():
+        # 1. Puan Durumu Çekimi
         std_url = f"{API_URL}/standings?league={comp_id}&season={season}"
         std_req = requests.get(std_url, headers=HEADERS)
         
-        # API Hız Sınırı Uyarısı
-        if std_req.status_code == 429:
-            await update.message.reply_text(f"⚠️ Hız sınırına takıldık (Dakikada 10 istek). Lütfen 1 dakika bekleyip tekrar /maclar yaz.")
-            return
-            
         standings_cache = {}
         if std_req.status_code == 200:
             resp = std_req.json().get("response", [])
@@ -58,18 +47,20 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for row in group:
                         standings_cache[row["team"]["id"]] = row
 
-        fix_url = f"{API_URL}/fixtures?league={comp_id}&season={season}&from={start_date}&to={end_date}"
+        # 2. Fikstür Çekimi (Tarih Kısıtlaması Yok, Doğrudan Sonraki 10 Maç)
+        fix_url = f"{API_URL}/fixtures?league={comp_id}&next=10"
         fix_req = requests.get(fix_url, headers=HEADERS)
         
-        if fix_req.status_code == 429:
-            await update.message.reply_text(f"⚠️ Fikstür çekilirken hız sınırına takıldık. 1 dakika beklemelisin.")
-            return
-            
         if fix_req.status_code != 200:
             continue
             
         fixtures = fix_req.json().get("response", [])
         
+        # API Lig için hiç maç göndermezse bizi uyaracak
+        if not fixtures:
+            mesajlar.append(f"⚠️ {comp_name} için API sıfır maç gönderdi.")
+            continue
+
         for match in fixtures:
             status = match["fixture"]["status"]["short"]
             if status in ["FT", "AET", "PEN", "CANC", "PST", "ABD"]:
@@ -88,14 +79,14 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mesajlar.append(f"🔴 CANLI | {comp_name} | {home_team} {h_score}-{a_score} {away_team}")
                 continue
 
-            if status != "NS":
+            if status not in ["NS", "TBD"]:
                 continue
                 
             home_stats = standings_cache.get(home_id)
             away_stats = standings_cache.get(away_id)
             
             if not home_stats or not away_stats:
-                mesajlar.append(f"🏆 {comp_name}\n📅 {utc_date}\n🏠 {home_team} - 🚪 {away_team}\n⚠️ Puan durumu verisi eksik.\n")
+                mesajlar.append(f"🏆 {comp_name}\n📅 {utc_date}\n🏠 {home_team} - 🚪 {away_team}\n⚠️ Puan durumu verisi henüz oluşmamış.\n")
                 continue
                 
             home_record = home_stats.get("all", {})
@@ -113,13 +104,13 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             a_win = away_record.get("win", 0)
             a_draw = away_record.get("draw", 0)
             
-            home_ppg = ((h_win * 3) + h_draw) / h_played
-            away_ppg = ((a_win * 3) + a_draw) / a_played
+            home_ppg = ((h_win * 3) + h_draw) / h_played if h_played > 0 else 0
+            away_ppg = ((a_win * 3) + a_draw) / a_played if a_played > 0 else 0
             
-            home_gf = home_record.get("goals", {}).get("for", 0) / h_played
-            home_ga = home_record.get("goals", {}).get("against", 0) / h_played
-            away_gf = away_record.get("goals", {}).get("for", 0) / a_played
-            away_ga = away_record.get("goals", {}).get("against", 0) / a_played
+            home_gf = home_record.get("goals", {}).get("for", 0) / h_played if h_played > 0 else 0
+            home_ga = home_record.get("goals", {}).get("against", 0) / h_played if h_played > 0 else 0
+            away_gf = away_record.get("goals", {}).get("for", 0) / a_played if a_played > 0 else 0
+            away_ga = away_record.get("goals", {}).get("against", 0) / a_played if a_played > 0 else 0
             
             home_form_str = home_stats.get("form", "") or "?"
             away_form_str = away_stats.get("form", "") or "?"
@@ -163,7 +154,7 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mesajlar.append(text)
 
     if not mesajlar:
-        await update.message.reply_text("Önümüzdeki günlerde bu liglerde maç bulunamadı.")
+        await update.message.reply_text("Maç bulunamadı. Lütfen API'nin maç verip vermediğini kontrol edin.")
     else:
         full_text = "\n────────────────────\n".join(mesajlar)
         if len(full_text) > 4000:
@@ -181,7 +172,7 @@ def main():
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("canli", canli))
     
-    print("API-Football Hız Korumalı Bot Başladı...")
+    print("API-Football Garanti Bot Başladı...")
     app.run_polling()
 
 if __name__ == "__main__":
