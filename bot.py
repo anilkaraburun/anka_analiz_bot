@@ -12,13 +12,11 @@ HEADERS = {
     "x-apisports-key": FOOTBALL_TOKEN
 }
 
+# Hız sınırına takılmamak için şimdilik 3 lig (Toplam 6 istek yapar, sınır 10)
 LEAGUES = {
     203: "🇹🇷 Süper Lig",
     39: "🇬🇧 Premier League",
-    140: "🇪🇸 La Liga",
-    135: "🇮🇹 Serie A",
-    78: "🇩🇪 Bundesliga",
-    61: "🇫🇷 Ligue 1"
+    140: "🇪🇸 La Liga"
 }
 
 def parse_form(form_str):
@@ -29,7 +27,7 @@ def parse_form(form_str):
     return pts / len(form_str) if len(form_str) > 0 else 1.0
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Süper Lig Analiz Botu devrede! 🤖\n/maclar - Maçları getirir\n/canli - Canlı skorlar")
+    await update.message.reply_text("Süper Lig Analiz Botu (Hız Korumalı) devrede! 🤖\n/maclar - Maçları getirir")
 
 async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Maçlar çekiliyor, lütfen bekle...")
@@ -38,15 +36,19 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     season = today.year if today.month >= 7 else today.year - 1
     
     start_date = today.strftime("%Y-%m-%d")
-    end_date = (today + timedelta(days=5)).strftime("%Y-%m-%d") # Kota tasarrufu için 5 günlük
+    end_date = (today + timedelta(days=5)).strftime("%Y-%m-%d")
     
     mesajlar = []
     
     for comp_id, comp_name in LEAGUES.items():
-        # 1. Puan Durumu Çekimi
         std_url = f"{API_URL}/standings?league={comp_id}&season={season}"
         std_req = requests.get(std_url, headers=HEADERS)
         
+        # API Hız Sınırı Uyarısı
+        if std_req.status_code == 429:
+            await update.message.reply_text(f"⚠️ Hız sınırına takıldık (Dakikada 10 istek). Lütfen 1 dakika bekleyip tekrar /maclar yaz.")
+            return
+            
         standings_cache = {}
         if std_req.status_code == 200:
             resp = std_req.json().get("response", [])
@@ -56,10 +58,13 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for row in group:
                         standings_cache[row["team"]["id"]] = row
 
-        # 2. Fikstür Çekimi
         fix_url = f"{API_URL}/fixtures?league={comp_id}&season={season}&from={start_date}&to={end_date}"
         fix_req = requests.get(fix_url, headers=HEADERS)
         
+        if fix_req.status_code == 429:
+            await update.message.reply_text(f"⚠️ Fikstür çekilirken hız sınırına takıldık. 1 dakika beklemelisin.")
+            return
+            
         if fix_req.status_code != 200:
             continue
             
@@ -89,9 +94,8 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             home_stats = standings_cache.get(home_id)
             away_stats = standings_cache.get(away_id)
             
-            # SEZON BAŞI KORUMASI: Puan durumu henüz yoksa bile maçı göster
             if not home_stats or not away_stats:
-                mesajlar.append(f"🏆 {comp_name}\n📅 {utc_date}\n🏠 {home_team} - 🚪 {away_team}\n⚠️ Puan durumu henüz oluşmamış.\n")
+                mesajlar.append(f"🏆 {comp_name}\n📅 {utc_date}\n🏠 {home_team} - 🚪 {away_team}\n⚠️ Puan durumu verisi eksik.\n")
                 continue
                 
             home_record = home_stats.get("all", {})
@@ -101,7 +105,7 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             a_played = away_record.get("played", 0)
             
             if h_played < 1 or a_played < 1:
-                mesajlar.append(f"🏆 {comp_name}\n📅 {utc_date}\n🏠 {home_team} - 🚪 {away_team}\n⚠️ Yeterli maç oynanmamış.\n")
+                mesajlar.append(f"🏆 {comp_name}\n📅 {utc_date}\n🏠 {home_team} - 🚪 {away_team}\n⚠️ Henüz maça çıkmamışlar.\n")
                 continue
                 
             h_win = home_record.get("win", 0)
@@ -177,7 +181,7 @@ def main():
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("canli", canli))
     
-    print("API-Football Asıl Bot Başladı...")
+    print("API-Football Hız Korumalı Bot Başladı...")
     app.run_polling()
 
 if __name__ == "__main__":
