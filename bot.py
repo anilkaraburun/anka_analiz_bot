@@ -112,8 +112,8 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             t_h_played = total_home.get("playedGames", 0)
             t_a_played = total_away.get("playedGames", 0)
             
+            # Veri yoksa mesaj ekleme, doğrudan geç (Ekran kalabalığını önler)
             if t_h_played == 0 or t_a_played == 0:
-                mesajlar.append(f"🏆 {competition}\n📅 {utc_date}\n🏠 {home_name} - 🚪 {away_name}\n⚠️ Sezonun ilk maçı (Veri yok).\n")
                 continue
 
             h_played = home_stats.get("playedGames", 0)
@@ -133,12 +133,16 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             home_ga = home_stats.get("goalsAgainst", 0) / h_played
             away_gf = away_stats.get("goalsFor", 0) / a_played
             away_ga = away_stats.get("goalsAgainst", 0) / a_played
-
-            home_form_ppg = parse_form(total_home.get("form", ""))
-            away_form_ppg = parse_form(total_away.get("form", ""))
             
-            home_form_str = str(total_home.get("form", "?")).replace(",", "")
-            away_form_str = str(total_away.get("form", "?")).replace(",", "")
+            home_form_raw = total_home.get("form")
+            away_form_raw = total_away.get("form")
+
+            home_form_ppg = parse_form(home_form_raw)
+            away_form_ppg = parse_form(away_form_raw)
+            
+            # None gelirse ? yap
+            home_form_str = str(home_form_raw).replace(",", "") if home_form_raw else "?"
+            away_form_str = str(away_form_raw).replace(",", "") if away_form_raw else "?"
 
             home_power = (home_ppg * 0.4) + (home_form_ppg * 0.4) + ((home_gf - home_ga) * 0.2)
             away_power = (away_ppg * 0.4) + (away_form_ppg * 0.4) + ((away_gf - away_ga) * 0.2)
@@ -184,7 +188,7 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mesajlar.append(text)
 
         if not mesajlar:
-            await update.message.reply_text("Şu an analiz edilebilir maç yok (Takımlar ya maça çıkmadı ya da güç dengeleri çok yakın).")
+            await update.message.reply_text("Şu an analiz edilebilir (yeterli verisi olan) maç yok. Liglerin ilerlemesi bekleniyor.")
         else:
             full_text = "\n────────────────────\n".join(mesajlar)
             if len(full_text) > 4000:
@@ -207,7 +211,7 @@ def main():
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("canli", canli))
     
-    print("football-data Botu (Güvenli Sürüm) Başladı...")
+    print("football-data Botu (Temiz Görünüm) Başladı...")
     app.run_polling()
 
 if __name__ == "__main__":
