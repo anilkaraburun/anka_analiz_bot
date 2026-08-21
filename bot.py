@@ -8,13 +8,11 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 FOOTBALL_TOKEN = os.getenv("FOOTBALL_TOKEN")
 
-# API-Football Doğrudan Bağlantı Ayarları
 API_URL = "https://v3.football.api-sports.io"
 HEADERS = {
     "x-apisports-key": FOOTBALL_TOKEN
 }
 
-# Yeni sisteme göre Lig ID'leri
 LEAGUES = {
     203: "🇹🇷 Süper Lig",
     39: "🇬🇧 Premier League",
@@ -43,7 +41,6 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Süper Lig ve Avrupa maçları analiz ediliyor, lütfen bekle...")
     
     today = datetime.utcnow()
-    # Sezonu otomatik belirle (Ağustos sonrası yeni sezon kabul edilir)
     season = today.year if today.month >= 7 else today.year - 1
     
     start_date = today.strftime("%Y-%m-%d")
@@ -52,22 +49,18 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     standings_cache = {}
     mesajlar = []
     
-    # 6 lig için döngü (Sıralama ve Fikstür verilerini çekme)
     for comp_id, comp_name in LEAGUES.items():
-        # 1. Puan Durumu Çekimi
         std_url = f"{API_URL}/standings?league={comp_id}&season={season}"
         std_req = requests.get(std_url, headers=HEADERS)
         
         standings_cache[comp_id] = {}
         if std_req.status_code == 200 and std_req.json().get("response"):
             league_data = std_req.json()["response"][0]["league"]
-            # Bazen ligler gruplara ayrılabilir, o yüzden ilk grubu alıyoruz
             for group in league_data.get("standings", []):
                 for row in group:
                     team_id = row["team"]["id"]
                     standings_cache[comp_id][team_id] = row
                     
-        # 2. Fikstür Çekimi (Gelecek 10 Gün)
         fix_url = f"{API_URL}/fixtures?league={comp_id}&season={season}&from={start_date}&to={end_date}"
         fix_req = requests.get(fix_url, headers=HEADERS)
         
@@ -79,7 +72,6 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for match in fixtures:
             status = match["fixture"]["status"]["short"]
             
-            # Biten veya iptal olan maçları atla
             if status in ["FT", "AET", "PEN", "CANC", "PST", "ABD"]:
                 continue
                 
@@ -89,7 +81,6 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             home_id = match["teams"]["home"]["id"]
             away_id = match["teams"]["away"]["id"]
             
-            # Canlı Maç Kontrolü
             is_live = status in ["1H", "2H", "HT", "ET", "BT", "P", "LIVE"]
             if is_live:
                 h_score = match["goals"]["home"] if match["goals"]["home"] is not None else 0
@@ -97,7 +88,6 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 mesajlar.append(f"🔴 CANLI | {comp_name} | {home_team} {h_score}-{a_score} {away_team}")
                 continue
 
-            # Gelecek Maç Analizi (Sadece Başlamamış Maçlar)
             if status != "NS":
                 continue
                 
@@ -107,13 +97,14 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not (home_stats and away_stats):
                 continue
                 
-            home_record = home_stats.get("home", {})
-            away_record = away_stats.get("away", {})
+            # SEZON BAŞI GÜNCELLEMESİ: İç/Dış saha yerine "Genel (all)" performanslara bakıyoruz.
+            home_record = home_stats.get("all", {})
+            away_record = away_stats.get("all", {})
             
             h_played = home_record.get("played", 0)
             a_played = away_record.get("played", 0)
             
-            # SEZON BAŞI KURALI: En az 1 iç/dış saha maçı
+            # Takımlar ligde en az 1 maç oynamış olmalı
             if h_played < 1 or a_played < 1:
                 continue
                 
@@ -136,13 +127,11 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             home_form_ppg = parse_form(home_form_str)
             away_form_ppg = parse_form(away_form_str)
             
-            # GÜÇ ALGORİTMASI HESAPLAMASI
             home_power = (home_ppg * 0.4) + (home_form_ppg * 0.4) + ((home_gf - home_ga) * 0.2)
             away_power = (away_ppg * 0.4) + (away_form_ppg * 0.4) + ((away_gf - away_ga) * 0.2)
             
             power_diff = home_power - away_power
             
-            # ALT / ÜST BEKLENTİSİ
             total_exp_goals = ((home_gf + away_ga) / 2) + ((away_gf + home_ga) / 2)
             
             ms_sinyal = ""
@@ -203,7 +192,7 @@ def main():
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("canli", canli))
     
-    print("API-Football (Süper Lig) Gelişmiş Bot çalışıyor...")
+    print("API-Football (Genel Form) Bot çalışıyor...")
     app.run_polling()
 
 if __name__ == "__main__":
