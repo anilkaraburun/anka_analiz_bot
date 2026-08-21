@@ -17,7 +17,6 @@ ISTENEN_FUTBOL_LIGLERI = [
     "Bundesliga", "Ligue 1", "UEFA Champions League", "Champions League"
 ]
 
-# Basketbolda sadece bu kelimeleri içeren dev ligleri filtreleyeceğiz (Kotayı korumak için)
 ISTENEN_BASKET_LIGLERI = ["NBA", "WNBA", "Euroleague", "Super Lig", "BSL", "Liga ACB"]
 
 def parse_form(form_str):
@@ -41,7 +40,7 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ APISPORTS_TOKEN bulunamadı.")
         return
 
-    await update.message.reply_text("🏀 Basketbol maçları galibiyet yüzdeleri ve sayı ortalamalarına göre analiz ediliyor...")
+    await update.message.reply_text("🏀 Tüm konferanslar ve veriler taranıyor, lütfen bekle...")
     
     try:
         today = datetime.utcnow().date()
@@ -54,31 +53,31 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if res.status_code == 200:
                 all_games.extend(res.json().get("response", []))
                 
-        # Sadece büyük ligleri filtrele
         filtered_games = [g for g in all_games if any(l.lower() in g.get("league", {}).get("name", "").lower() for l in ISTENEN_BASKET_LIGLERI)]
         
         if not filtered_games:
-            await update.message.reply_text("ℹ️ Bugün ve yarın için seçili dev liglerde (NBA, Euroleague vb.) basketbol maçı bulunamadı.")
+            await update.message.reply_text("ℹ️ Bugün ve yarın için seçili dev liglerde basketbol maçı bulunamadı.")
             return
 
-        # Liglerin ID ve Sezon bilgilerini toplayıp puan durumlarını çekeceğiz
         leagues = {(g["league"]["id"], g["league"]["season"]) for g in filtered_games}
         standings_cache = {}
         
         for lig_id, lig_sezon in leagues:
             std_res = requests.get(f"https://v1.basketball.api-sports.io/standings?league={lig_id}&season={lig_sezon}", headers=headers_basket)
             if std_res.status_code == 200:
-                # Standings listesini {team_id: stats} sözlüğüne çevir
                 standings_data = std_res.json().get("response", [])
-                # Bazı liglerde response direkt liste, bazıları gruplu. İlk listeyi dolaşıyoruz:
-                if standings_data and isinstance(standings_data[0], list):
-                    standings_data = standings_data[0]
-                
                 team_dict = {}
-                for row in standings_data:
-                    t_id = row.get("team", {}).get("id")
-                    if t_id:
-                        team_dict[t_id] = row
+                
+                # Tüm konferansları (Doğu/Batı) veya Grupları dolaş
+                for item in standings_data:
+                    if isinstance(item, list):
+                        for row in item:
+                            t_id = row.get("team", {}).get("id")
+                            if t_id: team_dict[t_id] = row
+                    else:
+                        t_id = item.get("team", {}).get("id")
+                        if t_id: team_dict[t_id] = item
+                        
                 standings_cache[lig_id] = team_dict
 
         mesajlar = []
@@ -95,30 +94,30 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
             away_id = game["teams"]["away"]["id"]
             saat = game["date"][:16].replace("T", " ")
             
-            # Puan Durumu Verileri
             comp_data = standings_cache.get(lig_id, {})
             home_stats = comp_data.get(home_id, {})
             away_stats = comp_data.get(away_id, {})
             
-            # Galibiyet/Mağlubiyet Sayıları (Genel)
             h_games = home_stats.get("games", {})
             a_games = away_stats.get("games", {})
             
             h_played = h_games.get("played", 0)
             a_played = a_games.get("played", 0)
             
+            # Veri yoksa pas geç, ekranı kirletme
             if h_played < 1 or a_played < 1:
-                mesajlar.append(f"🏆 {lig_adi}\n📅 {saat}\n🏀 {home_team} - {away_team}\n⚠️ Sezonun ilk maçları (Yeterli veri yok).\n")
                 continue
                 
-            h_win = h_games.get("won", {}).get("total", 0)
-            a_win = a_games.get("won", {}).get("total", 0)
+            # API'nin "win" veya "won" kullanımını garantiye al
+            h_win_data = h_games.get("win") or h_games.get("won") or {}
+            a_win_data = a_games.get("win") or a_games.get("won") or {}
             
-            # Galibiyet Yüzdesi Hesaplama
+            h_win = h_win_data.get("total", 0)
+            a_win = a_win_data.get("total", 0)
+            
             home_win_rate = h_win / h_played
             away_win_rate = a_win / a_played
             
-            # Sayı Ortalamaları Hesaplama
             h_pts = home_stats.get("points", {})
             a_pts = away_stats.get("points", {})
             
@@ -127,7 +126,6 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
             away_pf = a_pts.get("for", 0) / a_played
             away_pa = a_pts.get("against", 0) / a_played
             
-            # MATEMATİK: Beklenen Sayı ve Güç Farkı
             exp_home_pts = (home_pf + away_pa) / 2
             exp_away_pts = (away_pf + home_pa) / 2
             total_exp_pts = exp_home_pts + exp_away_pts
@@ -137,7 +135,6 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ms_sinyal = ""
             ms_guven = ""
             
-            # Basketbol için Güç Farkı Eşikleri (Galibiyet yüzdesi farkı)
             if power_diff >= 0.40:
                 ms_sinyal = "1️⃣ (Net Ev Sahibi)"
                 ms_guven = "Yüksek"
@@ -160,12 +157,12 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"🎯 MS: {ms_sinyal} (Güven: {ms_guven})\n"
                 
             text += f"🏀 Beklenen Toplam Sayı: {total_exp_pts:.1f} (Ev: {exp_home_pts:.1f} - Dep: {exp_away_pts:.1f})\n"
-            text += f"📊 Güç Farkı: {power_diff:.2f}\n"
+            text += f"📊 Güç Farkı (Yüzde): {power_diff:.2f}\n"
             
             mesajlar.append(text)
 
         if not mesajlar:
-            await update.message.reply_text("Bugün ve yarın için analiz edilebilir durumda basketbol maçı yok.")
+            await update.message.reply_text("Bugün ve yarın için analiz edilebilir durumda basketbol maçı yok (veya güçler çok yakın).")
         else:
             full_text = "\n────────────────────\n".join(mesajlar)
             if len(full_text) > 4000:
@@ -180,7 +177,7 @@ async def basket(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(error_details)
 
 # ==========================================
-# ⚽ FUTBOL ANALİZ ALGORİTMASI (Eski Kusursuz Hali)
+# ⚽ FUTBOL ANALİZ ALGORİTMASI
 # ==========================================
 async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⚽ Futbol maçları analiz ediliyor, lütfen bekle...")
@@ -228,26 +225,23 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for match in filtered:
             status = match.get("status", "")
-            if status == "FINISHED":
-                continue
+            if status == "FINISHED": continue
                 
-            home_name = match.get("homeTeam", {}).get("name", "Bilinmeyen Ev Sahibi")
-            away_name = match.get("awayTeam", {}).get("name", "Bilinmeyen Deplasman")
+            home_name = match.get("homeTeam", {}).get("name", "Bilinmeyen")
+            away_name = match.get("awayTeam", {}).get("name", "Bilinmeyen")
             competition = match.get("competition", {}).get("name", "")
             utc_date = match.get("utcDate", "")[:16].replace("T", " ")
             home_id = match.get("homeTeam", {}).get("id")
             away_id = match.get("awayTeam", {}).get("id")
             comp_id = match.get("competition", {}).get("id")
             
-            is_live = status in ["LIVE", "IN_PLAY", "PAUSED"]
-            if is_live: continue
+            if status in ["LIVE", "IN_PLAY", "PAUSED"]: continue
 
             comp_data = standings_cache.get(comp_id)
             if not comp_data: continue
 
             total_home = comp_data["total"].get(home_id) or {}
             total_away = comp_data["total"].get(away_id) or {}
-
             if not total_home or not total_away: continue
                 
             home_stats = comp_data["home"].get(home_id) or total_home
@@ -255,7 +249,6 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             t_h_played = total_home.get("playedGames", 0)
             t_a_played = total_away.get("playedGames", 0)
-            
             if t_h_played == 0 or t_a_played == 0: continue
 
             h_played = home_stats.get("playedGames", 0)
@@ -285,7 +278,6 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             home_power = (home_ppg * 0.4) + (home_form_ppg * 0.4) + ((home_gf - home_ga) * 0.2)
             away_power = (away_ppg * 0.4) + (away_form_ppg * 0.4) + ((away_gf - away_ga) * 0.2)
-            
             power_diff = home_power - away_power
             total_exp_goals = (home_gf + away_ga) / 2 + (away_gf + home_ga) / 2
 
@@ -316,12 +308,11 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 if ms_sinyal: text += f"🎯 MS: {ms_sinyal} (Güven: {ms_guven})\n"
                 if gol_sinyal: text += f"⚽ Gol: {gol_sinyal} (Bkl: {total_exp_goals:.1f})\n"
-                    
                 text += f"📊 Güç Farkı: {power_diff:.2f}\n"
                 mesajlar.append(text)
 
         if not mesajlar:
-            await update.message.reply_text("Şu an analiz edilebilir (yeterli verisi olan) maç yok.")
+            await update.message.reply_text("Şu an analiz edilebilir futbol maçı yok.")
         else:
             full_text = "\n────────────────────\n".join(mesajlar)
             if len(full_text) > 4000:
@@ -331,7 +322,7 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(full_text)
 
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Kritik bir hata oluştu:\n{str(e)}")
+        await update.message.reply_text(f"⚠️ Futbol analizinde hata oluştu:\n{str(e)}")
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -339,7 +330,7 @@ def main():
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("basket", basket))
     
-    print("Futbol & Basketbol Botu Başladı...")
+    print("Futbol & Basketbol Botu (Konferans Düzeltmeli) Başladı...")
     app.run_polling()
 
 if __name__ == "__main__":
