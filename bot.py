@@ -24,11 +24,11 @@ def parse_form(form_str):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Orijinal API (Filtresiz Test Modu) devrede. 🤖\n\n/maclar - Tüm maçları getirir"
+        "Avrupa Ligleri Gelişmiş Analiz Botu devrede! 🤖\n\n/maclar - Analizli maçları getirir"
     )
 
 async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Filtreler kapalı. Avrupa liglerindeki TÜM maçlar çekiliyor, lütfen bekle...")
+    await update.message.reply_text("Maçlar analiz ediliyor, lütfen bekle...")
     
     today = datetime.utcnow().date()
     end_date = today + timedelta(days=7)
@@ -37,14 +37,14 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response = requests.get(url, headers=headers)
     
     if response.status_code != 200:
-        await update.message.reply_text(f"❌ Veri alınamadı.\nHTTP Kodu: {response.status_code}\nDetay: {response.text}")
+        await update.message.reply_text("❌ Veri alınamadı. API hatası.")
         return
         
     matches = response.json().get("matches", [])
     filtered = [m for m in matches if any(l.lower() in m["competition"]["name"].lower() for l in ISTENEN_LIGLER)]
     
     if not filtered:
-        await update.message.reply_text("API önümüzdeki 7 gün için bu liglerde maç göndermedi.")
+        await update.message.reply_text("Önümüzdeki 7 günde belirtilen liglerde maç bulunamadı.")
         return
 
     competitions = {m["competition"]["id"]: m["competition"]["name"] for m in filtered}
@@ -66,6 +66,9 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     filtered.sort(key=lambda x: x["utcDate"])
     mesajlar = []
+    
+    # Çok uzun mesajları önlemek için sadece analiz yapılabilenleri toplayacağız
+    analiz_edilen_mac_sayisi = 0
 
     for match in filtered:
         status = match["status"]
@@ -91,31 +94,36 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         comp_data = standings_cache.get(comp_id)
         if not comp_data:
-            mesajlar.append(f"🏆 {competition}\n📅 {utc_date}\n🏠 {home_name} - 🚪 {away_name}\n⚠️ Puan durumu eksik.\n")
             continue
 
         total_home = comp_data["total"].get(home_id)
         total_away = comp_data["total"].get(away_id)
-        home_stats = comp_data["home"].get(home_id)
-        away_stats = comp_data["away"].get(away_id)
 
-        if not (home_stats and away_stats and total_home and total_away):
-            mesajlar.append(f"🏆 {competition}\n📅 {utc_date}\n🏠 {home_name} - 🚪 {away_name}\n⚠️ Takım istatistikleri eksik.\n")
+        if not total_home or not total_away:
             continue
+            
+        # Eğer İç/Dış saha tablosu boşsa, GENEL (Total) tabloyu kullan (Sezon başı hayat kurtarır)
+        home_stats = comp_data["home"].get(home_id) or total_home
+        away_stats = comp_data["away"].get(away_id) or total_away
         
+        t_h_played = total_home.get("playedGames", 0)
+        t_a_played = total_away.get("playedGames", 0)
+        
+        # Takımlar ligde henüz hiç maça çıkmamışsa analizi atla
+        if t_h_played == 0 or t_a_played == 0:
+            mesajlar.append(f"🏆 {competition}\n📅 {utc_date}\n🏠 {home_name} - 🚪 {away_name}\n⚠️ Takımlar henüz maça çıkmadı (Sezonun ilk maçı).\n")
+            continue
+
         h_played = home_stats.get("playedGames", 0)
         a_played = away_stats.get("playedGames", 0)
         
-        if h_played < 1:
+        # İç sahada henüz maç yoksa, bölme hatası vermemesi için genel istatistiği referans al
+        if h_played == 0:
             home_stats = total_home
-            h_played = home_stats.get("playedGames", 0)
-        if a_played < 1:
+            h_played = total_home.get("playedGames", 1)
+        if a_played == 0:
             away_stats = total_away
-            a_played = away_stats.get("playedGames", 0)
-            
-        if h_played < 1 or a_played < 1:
-            mesajlar.append(f"🏆 {competition}\n📅 {utc_date}\n🏠 {home_name} - 🚪 {away_name}\n⚠️ Yeterli maç oynanmamış.\n")
-            continue
+            a_played = total_away.get("playedGames", 1)
 
         home_ppg = home_stats.get("points", 0) / h_played
         away_ppg = away_stats.get("points", 0) / a_played
@@ -137,8 +145,8 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         power_diff = home_power - away_power
         total_exp_goals = (home_gf + away_ga) / 2 + (away_gf + home_ga) / 2
 
-        ms_sinyal = "Belirsiz (İlk Haftalar)"
-        ms_guven = "Düşük"
+        ms_sinyal = ""
+        ms_guven = ""
         
         if power_diff >= 0.7:
             ms_sinyal = "1️⃣ (Net Ev Sahibi)"
@@ -153,25 +161,31 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ms_sinyal = "2️⃣ veya X2"
             ms_guven = "Orta"
 
-        gol_sinyal = "Kararsız"
+        gol_sinyal = ""
         if total_exp_goals >= 2.8:
             gol_sinyal = "🔥 Üst 2.5 Güçlü"
         elif total_exp_goals <= 1.8:
             gol_sinyal = "🧊 Alt 2.5 Güçlü"
 
-        text = (
-            f"🏆 {competition}\n"
-            f"📅 {utc_date}\n"
-            f"🏠 {home_name} (Form: {home_form_str})\n"
-            f"🚪 {away_name} (Form: {away_form_str})\n"
-            f"🎯 MS: {ms_sinyal} (Güven: {ms_guven})\n"
-            f"⚽ Gol: {gol_sinyal} (Bkl: {total_exp_goals:.1f})\n"
-            f"📊 Güç Farkı: {power_diff:.2f}\n"
-        )
-        mesajlar.append(text)
+        # Taraf veya gol tahmini çıkardıysa listeye ekle
+        if ms_sinyal or gol_sinyal:
+            text = (
+                f"🏆 {competition}\n"
+                f"📅 {utc_date}\n"
+                f"🏠 {home_name} (Form: {home_form_str})\n"
+                f"🚪 {away_name} (Form: {away_form_str})\n"
+            )
+            if ms_sinyal:
+                text += f"🎯 MS: {ms_sinyal} (Güven: {ms_guven})\n"
+            if gol_sinyal:
+                text += f"⚽ Gol: {gol_sinyal} (Bkl: {total_exp_goals:.1f})\n"
+                
+            text += f"📊 Güç Farkı: {power_diff:.2f}\n"
+            mesajlar.append(text)
+            analiz_edilen_mac_sayisi += 1
 
     if not mesajlar:
-        await update.message.reply_text("Maç listesi tamamen boş döndü. (API kaynaklı)")
+        await update.message.reply_text("Şu an analiz edilebilir maç yok (Takımlar ya maça çıkmadı ya da güç dengeleri çok yakın).")
     else:
         full_text = "\n────────────────────\n".join(mesajlar)
         if len(full_text) > 4000:
@@ -189,7 +203,7 @@ def main():
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("canli", canli))
     
-    print("football-data (Filtresiz Test) Botu Başladı...")
+    print("football-data (Sezon Başı Uyumlu) Botu Başladı...")
     app.run_polling()
 
 if __name__ == "__main__":
