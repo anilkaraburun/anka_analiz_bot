@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Tokenlar
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 FOOTBALL_TOKEN = os.getenv("FOOTBALL_TOKEN")
 
@@ -30,15 +29,10 @@ def parse_form(form_str):
     return pts / len(form_str) if len(form_str) > 0 else 1.0
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Merhaba! Süper Lig destekli Gelişmiş Algoritma devrede. 🤖\n\n"
-        "Komutlar:\n"
-        "/maclar - İstatistiksel yapay zeka analizli maçlar\n"
-        "/canli - Şu anki canlı maçlar"
-    )
+    await update.message.reply_text("Filtresiz Analiz Modu aktif. 🤖\n/maclar - Tüm maçları getirir")
 
 async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Süper Lig ve Avrupa maçları analiz ediliyor, lütfen bekle...")
+    await update.message.reply_text("Tüm maçlar (filtresiz) çekiliyor, bekle...")
     
     today = datetime.utcnow()
     season = today.year if today.month >= 7 else today.year - 1
@@ -97,15 +91,14 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not (home_stats and away_stats):
                 continue
                 
-            # SEZON BAŞI GÜNCELLEMESİ: İç/Dış saha yerine "Genel (all)" performanslara bakıyoruz.
             home_record = home_stats.get("all", {})
             away_record = away_stats.get("all", {})
             
             h_played = home_record.get("played", 0)
             a_played = away_record.get("played", 0)
             
-            # Takımlar ligde en az 1 maç oynamış olmalı
             if h_played < 1 or a_played < 1:
+                mesajlar.append(f"🏆 {comp_name}\n📅 {utc_date}\n🏠 {home_team} - 🚪 {away_team}\n⚠️ Yeterli veri yok (Henüz maça çıkmamışlar)\n")
                 continue
                 
             h_win = home_record.get("win", 0)
@@ -121,60 +114,50 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             away_gf = away_record.get("goals", {}).get("for", 0) / a_played
             away_ga = away_record.get("goals", {}).get("against", 0) / a_played
             
-            home_form_str = home_stats.get("form", "") or "Bilinmiyor"
-            away_form_str = away_stats.get("form", "") or "Bilinmiyor"
+            home_form_str = home_stats.get("form", "") or "?"
+            away_form_str = away_stats.get("form", "") or "?"
             
-            home_form_ppg = parse_form(home_form_str)
-            away_form_ppg = parse_form(away_form_str)
-            
-            home_power = (home_ppg * 0.4) + (home_form_ppg * 0.4) + ((home_gf - home_ga) * 0.2)
-            away_power = (away_ppg * 0.4) + (away_form_ppg * 0.4) + ((away_gf - away_ga) * 0.2)
+            home_power = (home_ppg * 0.4) + (parse_form(home_form_str) * 0.4) + ((home_gf - home_ga) * 0.2)
+            away_power = (away_ppg * 0.4) + (parse_form(away_form_str) * 0.4) + ((away_gf - away_ga) * 0.2)
             
             power_diff = home_power - away_power
-            
             total_exp_goals = ((home_gf + away_ga) / 2) + ((away_gf + home_ga) / 2)
             
-            ms_sinyal = ""
-            ms_guven = ""
+            ms_sinyal = "Belirsiz (İzleyin)"
+            ms_guven = "Düşük"
             
-            if power_diff >= 0.7:
-                ms_sinyal = "1️⃣ (Net Ev Sahibi)"
+            if power_diff >= 0.6:
+                ms_sinyal = "1️⃣"
                 ms_guven = "Yüksek"
-            elif power_diff >= 0.3:
+            elif power_diff >= 0.2:
                 ms_sinyal = "1️⃣ veya 1X"
                 ms_guven = "Orta"
-            elif power_diff <= -0.7:
-                ms_sinyal = "2️⃣ (Net Deplasman)"
+            elif power_diff <= -0.6:
+                ms_sinyal = "2️⃣"
                 ms_guven = "Yüksek"
-            elif power_diff <= -0.3:
+            elif power_diff <= -0.2:
                 ms_sinyal = "2️⃣ veya X2"
                 ms_guven = "Orta"
                 
-            gol_sinyal = ""
-            if total_exp_goals >= 2.8:
-                gol_sinyal = "🔥 Üst 2.5 Güçlü"
-            elif total_exp_goals <= 1.8:
-                gol_sinyal = "🧊 Alt 2.5 Güçlü"
-                
-            if not ms_sinyal and not gol_sinyal:
-                continue
+            gol_sinyal = "Kararsız"
+            if total_exp_goals >= 2.6:
+                gol_sinyal = "Üst 2.5"
+            elif total_exp_goals <= 2.0:
+                gol_sinyal = "Alt 2.5"
                 
             text = (
                 f"🏆 {comp_name}\n"
                 f"📅 {utc_date}\n"
-                f"🏠 {home_team} (Son Form: {home_form_str})\n"
-                f"🚪 {away_team} (Son Form: {away_form_str})\n"
+                f"🏠 {home_team} ({home_form_str})\n"
+                f"🚪 {away_team} ({away_form_str})\n"
+                f"🎯 MS: {ms_sinyal} ({ms_guven})\n"
+                f"⚽ Gol: {gol_sinyal} ({total_exp_goals:.1f})\n"
+                f"📊 Güç Farkı: {power_diff:.2f}\n"
             )
-            if ms_sinyal:
-                text += f"🎯 Maç Sonucu: {ms_sinyal} (Güven: {ms_guven})\n"
-            if gol_sinyal:
-                text += f"⚽ Gol Tahmini: {gol_sinyal} (Bkl. Gol: {total_exp_goals:.1f})\n"
-                
-            text += f"📊 Güç Farkı: {power_diff:.2f}\n"
             mesajlar.append(text)
 
     if not mesajlar:
-        await update.message.reply_text("İstatistiksel filtreden geçebilen Yüksek/Orta güvenli maç bulunamadı.")
+        await update.message.reply_text("Hiç maç bulunamadı. Veri çekme aşamasında bir sorun var.")
     else:
         full_text = "\n────────────────────\n".join(mesajlar)
         if len(full_text) > 4000:
@@ -191,8 +174,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("maclar", maclar))
     app.add_handler(CommandHandler("canli", canli))
-    
-    print("API-Football (Genel Form) Bot çalışıyor...")
+    print("Bot Filtresiz Modda Başladı...")
     app.run_polling()
 
 if __name__ == "__main__":
