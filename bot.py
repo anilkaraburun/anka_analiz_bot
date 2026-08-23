@@ -13,22 +13,33 @@ APISPORTS_TOKEN = os.getenv("APISPORTS_TOKEN")
 headers_football = {"X-Auth-Token": FOOTBALL_TOKEN}
 headers_apisports = {"x-apisports-key": APISPORTS_TOKEN}
 
+# Daha esnek lig isimleri
 ISTENEN_FUTBOL_LIGLERI = [
-    "Premier League", "Primera Division", "Serie A",
-    "Bundesliga", "Ligue 1", "UEFA Champions League"
+    "Premier League", "La Liga", "Primera Division", "Serie A",
+    "Bundesliga", "Ligue 1", "UEFA Champions League", "Champions League"
 ]
 
-ISTENEN_BASKET_LIGLERI = ["NBA", "WNBA", "Euroleague", "Super Lig", "BSL", "Liga ACB"]
-ISTENEN_VOLEYBOL_LIGLERI = ["SuperLega", "PlusLiga", "Efeler Ligi", "Sultanlar Ligi", "Champions League"]
-ISTENEN_HOKEY_LIGLERI = ["NHL", "KHL", "SHL", "Liiga"]
-ISTENEN_HENTBOL_LIGLERI = ["Champions League", "Bundesliga", "LNH Division 1"]
+ISTENEN_BASKET_LIGLERI = [
+    "NBA", "WNBA", "Euroleague", "EuroLeague", "Super Lig", "BSL",
+    "Liga ACB", "ACB", "Basketbol Süper Ligi"
+]
+
+ISTENEN_VOLEYBOL_LIGLERI = [
+    "SuperLega", "PlusLiga", "Efeler Ligi", "Sultanlar Ligi",
+    "Champions League", "CEV Champions League"
+]
+
+ISTENEN_HOKEY_LIGLERI = ["NHL", "KHL", "SHL", "Liiga", "National League"]
+
+ISTENEN_HENTBOL_LIGLERI = [
+    "Champions League", "Bundesliga", "LNH Division 1", "Starligue", "Handball-Bundesliga"
+]
 
 TZ = ZoneInfo("Europe/Istanbul")
 
 
 # ====================== YARDIMCI FONKSİYONLAR ======================
 def parse_form(form_str: str) -> float:
-    """WWDL formunu 0-3 arası puana çevirir"""
     if not form_str:
         return 1.5
     form_str = str(form_str).replace(",", "").replace(" ", "").upper()
@@ -39,28 +50,34 @@ def parse_form(form_str: str) -> float:
 
 
 def normalize_averaj(value: float, scale: float = 4.0) -> float:
-    """Averajı makul aralığa sıkıştırır (-1.5 ~ +1.5)"""
     return max(min(value / scale, 1.5), -1.5)
 
 
 def calculate_power(win_rate: float, form_val: float, averaj: float) -> float:
-    """
-    Normalize edilmiş güç hesabı
-    %45 Galibiyet + %35 Form + %20 Averaj
-    """
-    form_norm = form_val / 3.0          # 0-1 arası
+    form_norm = form_val / 3.0
     averaj_norm = normalize_averaj(averaj)
     return (win_rate * 0.45) + (form_norm * 0.35) + (averaj_norm * 0.20)
 
 
-def safe_get(data: dict, *keys, default=0):
-    """İç içe dict'ten güvenli değer alma"""
+def safe_get(data, *keys, default=0):
     for key in keys:
         if isinstance(data, dict):
             data = data.get(key, {})
         else:
             return default
     return data if data not in (None, {}) else default
+
+
+def league_matches(league_name: str, target_leagues: list) -> bool:
+    """Daha esnek lig ismi eşleştirmesi"""
+    if not league_name:
+        return False
+    name = league_name.lower()
+    for target in target_leagues:
+        t = target.lower()
+        if t in name or name in t:
+            return True
+    return False
 
 
 # ====================== MENÜ ======================
@@ -95,6 +112,7 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, lea
 
     try:
         today = datetime.now(TZ).date()
+        # 3 güne bakıyoruz (daha fazla maç yakalamak için)
         dates = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(3)]
 
         all_games = []
@@ -109,11 +127,13 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, lea
 
         filtered = [
             g for g in all_games
-            if any(l.lower() in g.get("league", {}).get("name", "").lower() for l in leagues)
+            if league_matches(g.get("league", {}).get("name", ""), leagues)
         ]
 
         if not filtered:
-            await update.message.reply_text(f"ℹ️ Bugün/yarın seçili {sport_name} liglerinde maç yok.")
+            await update.message.reply_text(
+                f"ℹ️ Önümüzdeki 3 günde seçili {sport_name} liglerinde maç bulunamadı."
+            )
             return
 
         # Standings cache
@@ -164,23 +184,23 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, lea
             h_played = safe_get(h_games, "played") or safe_get(h_games, "played", "all") or 0
             a_played = safe_get(a_games, "played") or safe_get(a_games, "played", "all") or 0
 
+            # Minimum 1 maç yeterli
             if h_played < 1 or a_played < 1:
                 continue
 
             h_win = safe_get(h_games, "win", "total") or safe_get(h_games, "won", "total") or 0
             a_win = safe_get(a_games, "win", "total") or safe_get(a_games, "won", "total") or 0
 
-            home_win_rate = h_win / h_played
-            away_win_rate = a_win / a_played
+            home_win_rate = h_win / h_played if h_played > 0 else 0.5
+            away_win_rate = a_win / a_played if a_played > 0 else 0.5
 
-            # Gol / Sayı / Set
             h_pts = h_stats.get("goals") or h_stats.get("points") or {}
             a_pts = a_stats.get("goals") or a_stats.get("points") or {}
 
-            home_for = (safe_get(h_pts, "for") or 0) / h_played
-            home_against = (safe_get(h_pts, "against") or 0) / h_played
-            away_for = (safe_get(a_pts, "for") or 0) / a_played
-            away_against = (safe_get(a_pts, "against") or 0) / a_played
+            home_for = (safe_get(h_pts, "for") or 0) / max(h_played, 1)
+            home_against = (safe_get(h_pts, "against") or 0) / max(h_played, 1)
+            away_for = (safe_get(a_pts, "for") or 0) / max(a_played, 1)
+            away_against = (safe_get(a_pts, "against") or 0) / max(a_played, 1)
 
             h_averaj = home_for - home_against
             a_averaj = away_for - away_against
@@ -194,15 +214,15 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, lea
 
             exp_total = (home_for + away_against) / 2 + (away_for + home_against) / 2
 
-            # Sinyal
+            # Eşikler biraz düşürüldü
             ms_sinyal = ""
-            if power_diff >= 0.45:
+            if power_diff >= 0.38:
                 ms_sinyal = "1️⃣ Net Ev Sahibi (Yüksek)"
-            elif power_diff >= 0.22:
+            elif power_diff >= 0.18:
                 ms_sinyal = "1️⃣ Ev Sahibi Avantajlı (Orta)"
-            elif power_diff <= -0.45:
+            elif power_diff <= -0.38:
                 ms_sinyal = "2️⃣ Net Deplasman (Yüksek)"
-            elif power_diff <= -0.22:
+            elif power_diff <= -0.18:
                 ms_sinyal = "2️⃣ Deplasman Avantajlı (Orta)"
 
             if not ms_sinyal:
@@ -220,7 +240,10 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, lea
             mesajlar.append(text)
 
         if not mesajlar:
-            await update.message.reply_text(f"Şu an analiz edilebilir {sport_name} maçı yok.")
+            await update.message.reply_text(
+                f"Şu an analiz edilebilir {sport_name} maçı yok.\n"
+                f"(Toplam {len(filtered)} maç bulundu ama sinyal üretilmedi)"
+            )
             return
 
         full = "\n────────────────────\n".join(mesajlar)
@@ -254,7 +277,7 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         today = datetime.now(TZ).date()
-        end = today + timedelta(days=5)
+        end = today + timedelta(days=6)  # 1 haftaya bakıyoruz
         url = f"https://api.football-data.org/v4/matches?dateFrom={today}&dateTo={end}"
 
         res = requests.get(url, headers=headers_football, timeout=12)
@@ -265,14 +288,13 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         matches = res.json().get("matches", [])
         filtered = [
             m for m in matches
-            if any(l.lower() in m.get("competition", {}).get("name", "").lower() for l in ISTENEN_FUTBOL_LIGLERI)
+            if league_matches(m.get("competition", {}).get("name", ""), ISTENEN_FUTBOL_LIGLERI)
         ]
 
         if not filtered:
             await update.message.reply_text("Önümüzdeki günlerde belirtilen liglerde maç bulunamadı.")
             return
 
-        # Standings
         competitions = {m["competition"]["id"] for m in filtered}
         standings_cache = {}
 
@@ -314,21 +336,22 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             h_played = h_stats.get("playedGames", 0)
             a_played = a_stats.get("playedGames", 0)
-            if h_played < 3 or a_played < 3:
+
+            # Minimum 1 maç
+            if h_played < 1 or a_played < 1:
                 continue
 
-            home_ppg = h_stats.get("points", 0) / h_played
-            away_ppg = a_stats.get("points", 0) / a_played
+            home_ppg = h_stats.get("points", 0) / max(h_played, 1)
+            away_ppg = a_stats.get("points", 0) / max(a_played, 1)
 
-            home_gf = h_stats.get("goalsFor", 0) / h_played
-            home_ga = h_stats.get("goalsAgainst", 0) / h_played
-            away_gf = a_stats.get("goalsFor", 0) / a_played
-            away_ga = a_stats.get("goalsAgainst", 0) / a_played
+            home_gf = h_stats.get("goalsFor", 0) / max(h_played, 1)
+            home_ga = h_stats.get("goalsAgainst", 0) / max(h_played, 1)
+            away_gf = a_stats.get("goalsFor", 0) / max(a_played, 1)
+            away_ga = a_stats.get("goalsAgainst", 0) / max(a_played, 1)
 
             home_form = parse_form(total_h.get("form"))
             away_form = parse_form(total_a.get("form"))
 
-            # Futbol için özel güç (ppg bazlı)
             home_power = (home_ppg / 3 * 0.45) + (home_form / 3 * 0.35) + (normalize_averaj(home_gf - home_ga) * 0.20)
             away_power = (away_ppg / 3 * 0.45) + (away_form / 3 * 0.35) + (normalize_averaj(away_gf - away_ga) * 0.20)
             power_diff = home_power - away_power
@@ -336,19 +359,19 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exp_goals = (home_gf + away_ga) / 2 + (away_gf + home_ga) / 2
 
             ms_sinyal = ""
-            if power_diff >= 0.28:
+            if power_diff >= 0.25:
                 ms_sinyal = "1️⃣ Net Ev Sahibi"
-            elif power_diff >= 0.14:
+            elif power_diff >= 0.12:
                 ms_sinyal = "1️⃣ veya 1X"
-            elif power_diff <= -0.28:
+            elif power_diff <= -0.25:
                 ms_sinyal = "2️⃣ Net Deplasman"
-            elif power_diff <= -0.14:
+            elif power_diff <= -0.12:
                 ms_sinyal = "2️⃣ veya X2"
 
             gol_sinyal = ""
-            if exp_goals >= 2.65:
+            if exp_goals >= 2.60:
                 gol_sinyal = "🔥 Üst 2.5"
-            elif exp_goals <= 2.05:
+            elif exp_goals <= 2.10:
                 gol_sinyal = "🧊 Alt 2.5"
 
             if not (ms_sinyal or gol_sinyal):
@@ -369,7 +392,10 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mesajlar.append(text)
 
         if not mesajlar:
-            await update.message.reply_text("Şu an analiz edilebilir futbol maçı yok.")
+            await update.message.reply_text(
+                f"Şu an analiz edilebilir futbol maçı yok.\n"
+                f"(Toplam {len(filtered)} maç bulundu ama sinyal üretilmedi)"
+            )
             return
 
         full = "\n────────────────────\n".join(mesajlar)
