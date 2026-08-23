@@ -256,17 +256,17 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Futbol analizinde hata:\n{str(e)}")
 
-def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).post_init(setup_menu).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("maclar", maclar))
-    app.add_handler(CommandHandler("basket", basket))
-    app.add_handler(CommandHandler("voleybol", voleybol))
-    app.add_handler(CommandHandler("hokey", hokey))
-    app.add_handler(CommandHandler("hentbol", hentbol))
-    
-    print("Multi-Spor Kapsamlı Botu Başladı...")
-    app.run_polling()
+async def setup_menu(application: Application):
+    commands = [
+        BotCommand("start", "🤖 Botu başlatır"),
+        BotCommand("maclar", "⚽ Futbol (Form+Gol)"),
+        BotCommand("basket", "🏀 Basketbol (Kapsamlı)"),
+        BotCommand("voleybol", "🏐 Voleybol (Set+Form)"),
+        BotCommand("hokey", "🏒 Buz Hokeyi (Gol+Form)"),
+        BotCommand("hentbol", "🤾 Hentbol (Sayı+Form)")
+    ]
+    await application.bot.set_my_commands(commands)
+    print("Multi-Spor Menüsü Telegram'a yüklendi!")
 
 if __name__ == "__main__":
     main()
