@@ -164,7 +164,7 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, lea
             h_played = safe_get(h_games, "played") or safe_get(h_games, "played", "all") or 0
             a_played = safe_get(a_games, "played") or safe_get(a_games, "played", "all") or 0
 
-            if h_played < 3 or a_played < 3:
+            if h_played < 1 or a_played < 1:
                 continue
 
             h_win = safe_get(h_games, "win", "total") or safe_get(h_games, "won", "total") or 0
