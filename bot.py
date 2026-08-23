@@ -47,7 +47,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ==========================================
-# 🏐 Voleybol, 🏒 Hokey, 🤾 Hentbol İÇİN ORTAK API-SPORTS MOTORU
+# 🏐 Voleybol, 🏒 Hokey, 🤾 Hentbol ve 🏀 Basketbol İÇİN ORTAK API-SPORTS MOTORU
 # ==========================================
 async def apisports_analyzer(update: Update, sport_name: str, base_url: str, dev_leagues: list, icon: str):
     if not APISPORTS_TOKEN:
@@ -124,7 +124,6 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, dev
             away_win_rate = a_win / a_played
             
             # 2. Kriter: Skor/Set Averajı
-            # Voleybolda set averajı, Hokeyde gol, Basketbolda sayı averajı
             h_pts = home_stats.get("goals") or home_stats.get("points") or {}
             a_pts = away_stats.get("goals") or away_stats.get("points") or {}
             
@@ -143,7 +142,6 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, dev
             away_form_val = parse_form(away_form_raw)
             
             # KAPSAMLI GÜÇ HESAPLAMASI (%50 Galibiyet, %30 Form, %20 Averaj)
-            # Averajı normalize etmek için 0.1 ile çarpıyoruz (uçurum olmaması için)
             home_power = (home_win_rate * 0.5) + (home_form_val * 0.3) + (h_averaj_katsayisi * 0.1)
             away_power = (away_win_rate * 0.5) + (away_form_val * 0.3) + (a_averaj_katsayisi * 0.1)
             
@@ -264,6 +262,9 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             home_power = (home_ppg * 0.4) + (home_form_ppg * 0.4) + ((home_gf - home_ga) * 0.2)
             away_power = (away_ppg * 0.4) + (away_form_ppg * 0.4) + ((away_gf - away_ga) * 0.2)
             power_diff = home_power - away_power
+            
+            # Gol Hesaplaması
+            total_exp_goals = (home_gf + away_ga) / 2 + (away_gf + home_ga) / 2
 
             ms_sinyal = ""
             if power_diff >= 0.7: ms_sinyal = "1️⃣ (Net Ev Sahibi)"
@@ -271,13 +272,21 @@ async def maclar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif power_diff <= -0.7: ms_sinyal = "2️⃣ (Net Deplasman)"
             elif power_diff <= -0.3: ms_sinyal = "2️⃣ veya X2"
 
-            if ms_sinyal:
-                mesajlar.append(
+            gol_sinyal = ""
+            # Eşikleri biraz esnettik ki maçlarda daha fazla gol tahmini görebilesin
+            if total_exp_goals >= 2.6: gol_sinyal = "🔥 Üst 2.5"
+            elif total_exp_goals <= 2.0: gol_sinyal = "🧊 Alt 2.5"
+
+            if ms_sinyal or gol_sinyal:
+                text = (
                     f"🏆 {match['competition']['name']}\n📅 {match['utcDate'][:16].replace('T', ' ')}\n"
                     f"🏠 {match['homeTeam']['name']} (Form: {str(total_home.get('form', '?')).replace(',','')})\n"
                     f"🚪 {match['awayTeam']['name']} (Form: {str(total_away.get('form', '?')).replace(',','')})\n"
-                    f"🎯 MS: {ms_sinyal}\n📊 Güç Farkı: {power_diff:.2f}\n"
                 )
+                if ms_sinyal: text += f"🎯 MS: {ms_sinyal}\n"
+                if gol_sinyal: text += f"⚽ Gol: {gol_sinyal} (Bkl: {total_exp_goals:.1f})\n"
+                text += f"📊 Güç Farkı: {power_diff:.2f}\n"
+                mesajlar.append(text)
 
         if not mesajlar: await update.message.reply_text("Şu an analiz edilebilir futbol maçı yok.")
         else: await update.message.reply_text("\n────────────────────\n".join(mesajlar)[:4000])
