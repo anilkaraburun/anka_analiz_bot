@@ -95,7 +95,7 @@ async def apisports_analyzer(update: Update, sport_name: str, base_url: str, lea
 
     try:
         today = datetime.now(TZ).date()
-        dates = [today.strftime("%Y-%m-%d"), (today + timedelta(days=1)).strftime("%Y-%m-%d")]
+        dates = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(3)]
 
         all_games = []
         for d in dates:
